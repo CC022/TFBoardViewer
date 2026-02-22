@@ -5,18 +5,6 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum PreviewSelection: Identifiable {
-    case media(MediaFrame)
-    case video(VideoSequence)
-
-    var id: UUID {
-        switch self {
-        case .media(let m): return m.id
-        case .video(let v): return v.id
-        }
-    }
-}
-
 struct ContentView: View {
     @Environment(AppState.self) private var state
 
@@ -115,7 +103,6 @@ private struct DropHintView: View {
 
 private struct TagDetail: View {
     let bundle: TagBundle
-    @State private var selectedPreview: PreviewSelection?
 
     var body: some View {
         ScrollView {
@@ -171,10 +158,12 @@ private struct TagDetail: View {
                 if !bundle.videos.isEmpty {
                     GroupBox("Video (Frame Sequence)") {
                         ForEach(bundle.videos) { video in
-                            Button("Play step \(video.step) (\(video.frames.count) frames)") {
-                                selectedPreview = .video(video)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("step \(video.step) • \(video.frames.count) frames")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                FramePlayerView(video: video)
                             }
-                            .buttonStyle(.link)
                         }
                     }
                 }
@@ -182,10 +171,16 @@ private struct TagDetail: View {
                 if !bundle.media.isEmpty {
                     GroupBox("Video / GIF") {
                         ForEach(bundle.media) { frame in
-                            Button("Open step \(frame.step)") {
-                                selectedPreview = .media(frame)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("step \(frame.step)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                if frame.kind == .gif {
+                                    GIFPlayerView(data: frame.data)
+                                } else {
+                                    MediaPlayerView(frame: frame)
+                                }
                             }
-                            .buttonStyle(.link)
                         }
                     }
                 }
@@ -193,18 +188,6 @@ private struct TagDetail: View {
             .padding()
         }
         .navigationTitle(bundle.tag)
-        .sheet(item: $selectedPreview) { preview in
-            switch preview {
-            case .media(let media):
-                if media.kind == .gif {
-                    GIFPlayerSheet(data: media.data)
-                } else {
-                    MediaPlayerSheet(frame: media)
-                }
-            case .video(let video):
-                FramePlayerSheet(video: video)
-            }
-        }
     }
 
     private func copyScalarsCSV(_ scalars: [ScalarPoint]) {
@@ -219,7 +202,7 @@ private struct TagDetail: View {
     }
 }
 
-private struct GIFPlayerSheet: View {
+private struct GIFPlayerView: View {
     let data: Data
     @State private var frames: [NSImage] = []
     @State private var delays: [Double] = []
@@ -232,10 +215,10 @@ private struct GIFPlayerSheet: View {
                 Image(nsImage: frame)
                     .resizable()
                     .scaledToFit()
-                    .frame(minWidth: 640, minHeight: 380)
+                    .frame(minHeight: 280)
             } else {
                 ContentUnavailableView("Unsupported GIF", systemImage: "video.slash")
-                    .frame(minWidth: 640, minHeight: 380)
+                    .frame(minHeight: 280)
             }
 
             HStack {
@@ -243,6 +226,12 @@ private struct GIFPlayerSheet: View {
                     isPlaying.toggle()
                 }
                 .buttonStyle(.bordered)
+
+                Button("Copy Frame", systemImage: "doc.on.doc") {
+                    if let frame = currentFrame { copyImageToPasteboard(frame) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(currentFrame == nil)
 
                 if frames.count > 1 {
                     Slider(
@@ -285,7 +274,7 @@ private struct GIFPlayerSheet: View {
     }
 }
 
-private struct FramePlayerSheet: View {
+private struct FramePlayerView: View {
     let video: VideoSequence
     @State private var frameIndex = 0
     @State private var isPlaying = true
@@ -296,10 +285,10 @@ private struct FramePlayerSheet: View {
                 Image(nsImage: current)
                     .resizable()
                     .scaledToFit()
-                    .frame(minWidth: 640, minHeight: 380)
+                    .frame(minHeight: 280)
             } else {
                 ContentUnavailableView("No frames", systemImage: "video.slash")
-                    .frame(minWidth: 640, minHeight: 380)
+                    .frame(minHeight: 280)
             }
 
             HStack {
@@ -307,6 +296,12 @@ private struct FramePlayerSheet: View {
                     isPlaying.toggle()
                 }
                 .buttonStyle(.bordered)
+
+                Button("Copy Frame", systemImage: "doc.on.doc") {
+                    if let frame = currentImage { copyImageToPasteboard(frame) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(currentImage == nil)
 
                 if video.frames.count > 1 {
                     Slider(
@@ -369,14 +364,18 @@ private func decodeGIF(data: Data) -> ([NSImage], [Double]) {
     return (images, delays)
 }
 
-private struct MediaPlayerSheet: View {
+private func copyImageToPasteboard(_ image: NSImage) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.writeObjects([image])
+}
+
+private struct MediaPlayerView: View {
     let frame: MediaFrame
 
     var body: some View {
         if let url = writeTempMedia(frame) {
             VideoPlayer(player: AVPlayer(url: url))
-                .frame(minWidth: 600, minHeight: 380)
-                .padding()
+                .frame(minHeight: 280)
         } else {
             ContentUnavailableView("Unsupported media", systemImage: "video.slash")
         }
