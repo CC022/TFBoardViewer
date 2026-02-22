@@ -115,7 +115,7 @@ private struct SidebarRow: View {
     }
 
     private var icon: String {
-        if !bundle.scalars.isEmpty { return "chart.line.uptrend.xyaxis" }
+        if !bundle.scalars.isEmpty { return "gauge.with.dots.needle.67percent" }
         if !bundle.videos.isEmpty || !bundle.media.isEmpty { return "video" }
         if !bundle.images.isEmpty { return "photo" }
         return "doc.text"
