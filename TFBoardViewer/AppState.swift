@@ -8,10 +8,12 @@ final class AppState {
     var isLoading = false
     var error: String?
     var selectedTag: String?
+    var loadedFolderName: String?
 
     func loadFolder(_ url: URL) {
         isLoading = true
         error = nil
+        loadedFolderName = url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent
         Task {
             do {
                 let parsed = try await Task.detached(priority: .userInitiated) {

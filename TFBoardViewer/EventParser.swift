@@ -25,7 +25,7 @@ private struct EventValue {
 }
 
 enum EventParser {
-    static func parse(folderURL: URL) throws -> ParsedLog {
+    nonisolated static func parse(folderURL: URL) throws -> ParsedLog {
         var parsed = ParsedLog()
         let files = try collectEventFiles(in: folderURL)
         for file in files {
