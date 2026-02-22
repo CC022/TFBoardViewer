@@ -1,6 +1,7 @@
 import AppKit
 import AVKit
 import Charts
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -195,7 +196,11 @@ private struct TagDetail: View {
         .sheet(item: $selectedPreview) { preview in
             switch preview {
             case .media(let media):
-                MediaPlayerSheet(frame: media)
+                if media.kind == .gif {
+                    GIFPlayerSheet(data: media.data)
+                } else {
+                    MediaPlayerSheet(frame: media)
+                }
             case .video(let video):
                 FramePlayerSheet(video: video)
             }
@@ -211,6 +216,72 @@ private struct TagDetail: View {
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(csv, forType: .string)
+    }
+}
+
+private struct GIFPlayerSheet: View {
+    let data: Data
+    @State private var frames: [NSImage] = []
+    @State private var delays: [Double] = []
+    @State private var frameIndex = 0
+    @State private var isPlaying = true
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if let frame = currentFrame {
+                Image(nsImage: frame)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(minWidth: 640, minHeight: 380)
+            } else {
+                ContentUnavailableView("Unsupported GIF", systemImage: "video.slash")
+                    .frame(minWidth: 640, minHeight: 380)
+            }
+
+            HStack {
+                Button(isPlaying ? "Pause" : "Play", systemImage: isPlaying ? "pause.fill" : "play.fill") {
+                    isPlaying.toggle()
+                }
+                .buttonStyle(.bordered)
+
+                if frames.count > 1 {
+                    Slider(
+                        value: Binding(
+                            get: { Double(frameIndex) },
+                            set: { frameIndex = Int($0) }
+                        ),
+                        in: 0...Double(frames.count - 1),
+                        step: 1
+                    )
+                } else {
+                    Slider(value: .constant(0), in: 0...1)
+                        .disabled(true)
+                }
+
+                Text("\(frameIndex + 1)/\(max(1, frames.count))")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .task {
+            (frames, delays) = decodeGIF(data: data)
+            frameIndex = 0
+        }
+        .task(id: isPlaying) {
+            guard isPlaying, !frames.isEmpty else { return }
+            while isPlaying {
+                let delay = max(0.02, delays.indices.contains(frameIndex) ? delays[frameIndex] : 0.1)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard isPlaying, !frames.isEmpty else { break }
+                frameIndex = (frameIndex + 1) % frames.count
+            }
+        }
+    }
+
+    private var currentFrame: NSImage? {
+        guard frames.indices.contains(frameIndex) else { return nil }
+        return frames[frameIndex]
     }
 }
 
@@ -237,14 +308,19 @@ private struct FramePlayerSheet: View {
                 }
                 .buttonStyle(.bordered)
 
-                Slider(
-                    value: Binding(
-                        get: { Double(frameIndex) },
-                        set: { frameIndex = Int($0) }
-                    ),
-                    in: 0...Double(max(0, video.frames.count - 1)),
-                    step: 1
-                )
+                if video.frames.count > 1 {
+                    Slider(
+                        value: Binding(
+                            get: { Double(frameIndex) },
+                            set: { frameIndex = Int($0) }
+                        ),
+                        in: 0...Double(video.frames.count - 1),
+                        step: 1
+                    )
+                } else {
+                    Slider(value: .constant(0), in: 0...1)
+                        .disabled(true)
+                }
 
                 Text("\(frameIndex + 1)/\(max(1, video.frames.count))")
                     .monospacedDigit()
@@ -268,6 +344,29 @@ private struct FramePlayerSheet: View {
         guard video.frames.indices.contains(frameIndex) else { return nil }
         return NSImage(data: video.frames[frameIndex])
     }
+}
+
+private func decodeGIF(data: Data) -> ([NSImage], [Double]) {
+    guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return ([], []) }
+    let count = CGImageSourceGetCount(src)
+    guard count > 0 else { return ([], []) }
+
+    var images: [NSImage] = []
+    var delays: [Double] = []
+    images.reserveCapacity(count)
+    delays.reserveCapacity(count)
+
+    for i in 0..<count {
+        guard let cg = CGImageSourceCreateImageAtIndex(src, i, nil) else { continue }
+        images.append(NSImage(cgImage: cg, size: .zero))
+
+        let props = CGImageSourceCopyPropertiesAtIndex(src, i, nil) as? [CFString: Any]
+        let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        let unclamped = gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double
+        let clamped = gif?[kCGImagePropertyGIFDelayTime] as? Double
+        delays.append(max(0.02, unclamped ?? clamped ?? 0.1))
+    }
+    return (images, delays)
 }
 
 private struct MediaPlayerSheet: View {

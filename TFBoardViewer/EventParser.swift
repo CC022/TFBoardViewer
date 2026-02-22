@@ -47,7 +47,12 @@ enum EventParser {
             }
 
             if let image = value.imageData {
-                parsed.pushImage(tag: value.tag, step: event.step, wallTime: date, data: image)
+                let kind = detectMediaKind(image)
+                if value.pluginName == "videos" || kind == .gif || kind == .mp4 {
+                    parsed.pushMedia(tag: value.tag, step: event.step, wallTime: date, data: image, kind: kind)
+                } else {
+                    parsed.pushImage(tag: value.tag, step: event.step, wallTime: date, data: image)
+                }
                 continue
             }
 
