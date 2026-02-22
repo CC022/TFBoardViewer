@@ -53,13 +53,19 @@ enum EventParser {
 
             guard let tensor = value.tensor else { continue }
 
-            if let scalar = tensorScalar(tensor) {
-                parsed.pushScalar(tag: value.tag, step: event.step, wallTime: date, value: scalar)
-                continue
+            if value.pluginName == "videos" {
+                if let media = tensorMediaData(tensor) {
+                    parsed.pushMedia(tag: value.tag, step: event.step, wallTime: date, data: media.0, kind: media.1)
+                    continue
+                }
+                if let frames = tensorImageFrames(tensor), frames.count > 1 {
+                    parsed.pushVideo(tag: value.tag, step: event.step, wallTime: date, frames: frames, fps: 8)
+                    continue
+                }
             }
 
-            if let d = tensorImageData(tensor) {
-                parsed.pushImage(tag: value.tag, step: event.step, wallTime: date, data: d)
+            if let scalar = tensorScalar(tensor) {
+                parsed.pushScalar(tag: value.tag, step: event.step, wallTime: date, value: scalar)
                 continue
             }
 
@@ -68,8 +74,14 @@ enum EventParser {
                 continue
             }
 
-            if value.pluginName == "videos", let blob = tensor.stringVals.first {
-                parsed.pushMedia(tag: value.tag, step: event.step, wallTime: date, data: blob, kind: detectMediaKind(blob))
+            if let frames = tensorImageFrames(tensor), frames.count > 1 {
+                parsed.pushVideo(tag: value.tag, step: event.step, wallTime: date, frames: frames, fps: 8)
+                continue
+            }
+
+            if let d = tensorImageData(tensor) {
+                parsed.pushImage(tag: value.tag, step: event.step, wallTime: date, data: d)
+                continue
             }
         }
     }
@@ -99,6 +111,11 @@ enum EventParser {
         }
         if isImage(tensor.tensorContent) { return tensor.tensorContent }
         return nil
+    }
+
+    private static func tensorImageFrames(_ tensor: TensorValue) -> [Data]? {
+        let frames = tensor.stringVals.filter { isImage($0) }
+        return frames.isEmpty ? nil : frames
     }
 
     private static func tensorMediaData(_ tensor: TensorValue) -> (Data, MediaKind)? {
