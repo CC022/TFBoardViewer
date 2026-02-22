@@ -255,7 +255,6 @@ private struct ScalarChartCard: View {
                             y: .value("Value", point.value)
                         )
                         .interpolationMethod(.linear)
-                        .foregroundStyle(.blue)
                     }
 
                     if let hovered {
