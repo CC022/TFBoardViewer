@@ -5,9 +5,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
 
     var body: some View {
+        @Bindable var state = state
         NavigationSplitView {
             List(selection: $state.selectedTag) {
                 ForEach(state.parsed.sortedBundles) { bundle in

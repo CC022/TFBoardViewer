@@ -1,12 +1,13 @@
 import Foundation
-import SwiftUI
+import Observation
 
 @MainActor
-final class AppState: ObservableObject {
-    @Published var parsed = ParsedLog()
-    @Published var isLoading = false
-    @Published var error: String?
-    @Published var selectedTag: String?
+@Observable
+final class AppState {
+    var parsed = ParsedLog()
+    var isLoading = false
+    var error: String?
+    var selectedTag: String?
 
     func loadFolder(_ url: URL) {
         isLoading = true
