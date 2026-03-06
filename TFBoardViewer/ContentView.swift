@@ -34,8 +34,12 @@ struct ContentView: View {
                     ProgressView("Loading tfevents…")
                 } else if let error = state.error {
                     ContentUnavailableView("Parse failed", systemImage: "exclamationmark.triangle", description: Text(error))
-                } else if let bundle = state.parsed.bundlesByTag[state.selectedTag ?? ""] {
-                    TagDetail(bundle: bundle, folderName: state.loadedFolderName)
+                } else if !state.parsed.sortedBundles.isEmpty {
+                    DashboardDetail(
+                        bundles: state.parsed.sortedBundles,
+                        selectedTag: state.selectedTag,
+                        folderName: state.loadedFolderName
+                    )
                 } else {
                     DropHintView(onSelectFolder: pickFolder)
                 }
@@ -139,84 +143,102 @@ private struct DropHintView: View {
     }
 }
 
-private struct TagDetail: View {
-    let bundle: TagBundle
+private struct DashboardDetail: View {
+    let bundles: [TagBundle]
+    let selectedTag: String?
     let folderName: String?
+    private let columns: [GridItem] = [
+        GridItem(.flexible(minimum: 320), spacing: 12, alignment: .top),
+        GridItem(.flexible(minimum: 320), spacing: 12, alignment: .top)
+    ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                headerCard
-
-                if !bundle.scalars.isEmpty {
-                    ScalarChartCard(tag: bundle.tag, points: bundle.scalars)
-                        .id(scalarSeriesIdentity(tag: bundle.tag, points: bundle.scalars))
-                }
-
-                if !bundle.images.isEmpty {
-                    GroupBox("Images") {
-                        LazyVGrid(columns: [.init(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-                            ForEach(bundle.images) { frame in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    if let nsImage = NSImage(data: frame.data) {
-                                        Image(nsImage: nsImage)
-                                            .resizable()
-                                            .scaledToFit()
-                                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                                            .frame(maxWidth: .infinity)
-                                    }
-                                    Text("step \(frame.step)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(bundles) { bundle in
+                        VariableCard(
+                            bundle: bundle,
+                            folderName: folderName,
+                            isSelected: bundle.tag == selectedTag
+                        )
+                        .id(bundle.tag)
                     }
                 }
-
-                if !bundle.videos.isEmpty {
-                    GroupBox("Video (Frame Sequence)") {
-                        VStack(spacing: 16) {
-                            ForEach(bundle.videos) { video in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("step \(video.step) • \(video.frames.count) frames")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                    FramePlayerView(video: video)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !bundle.media.isEmpty {
-                    GroupBox("Video / GIF") {
-                        VStack(spacing: 16) {
-                            ForEach(bundle.media) { frame in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("step \(frame.step)")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                    if frame.kind == .gif {
-                                        GIFPlayerView(data: frame.data)
-                                    } else {
-                                        MediaPlayerView(frame: frame)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                .padding(2)
+            }
+            .onChange(of: selectedTag) { _, newValue in
+                guard let tag = newValue else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    scrollProxy.scrollTo(tag, anchor: .top)
                 }
             }
-            .padding(2)
         }
-        .navigationTitle(bundle.tag)
+        .navigationTitle("TensorBoard Dashboard")
+    }
+}
+
+private struct VariableCard: View {
+    let bundle: TagBundle
+    let folderName: String?
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            headerCard
+
+            if !bundle.scalars.isEmpty {
+                ScalarChartCard(tag: bundle.tag, points: bundle.scalars)
+                    .id(scalarSeriesIdentity(tag: bundle.tag, points: bundle.scalars))
+            } else if let frame = bundle.images.last, let nsImage = NSImage(data: frame.data) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(minHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    Text("Image • step \(frame.step)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let media = bundle.media.last {
+                VStack(alignment: .leading, spacing: 8) {
+                    if media.kind == .gif {
+                        GIFPlayerView(data: media.data)
+                    } else {
+                        MediaPlayerView(frame: media)
+                    }
+                    Text("Media • step \(media.step)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let video = bundle.videos.last {
+                VStack(alignment: .leading, spacing: 8) {
+                    FramePlayerView(video: video)
+                    Text("Video • step \(video.step) • \(video.frames.count) frames")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.tint, lineWidth: 1.5)
+            } else {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.quaternary, lineWidth: 1)
+            }
+        }
     }
 
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(bundle.tag)
-                .font(.title2.bold())
+                .font(.headline.weight(.semibold))
             if let folderName {
                 Text(folderName)
                     .font(.subheadline)
@@ -226,9 +248,7 @@ private struct TagDetail: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func scalarSeriesIdentity(tag: String, points: [ScalarPoint]) -> Int {
