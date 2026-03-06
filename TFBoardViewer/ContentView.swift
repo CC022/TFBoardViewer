@@ -370,7 +370,7 @@ private struct ScalarChartCard: View {
                         }
                     }
                 }
-                .frame(height: 320)
+                .frame(height: 240)
             }
         }
     }
