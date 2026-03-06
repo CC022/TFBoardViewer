@@ -149,7 +149,7 @@ private struct TagDetail: View {
                 headerCard
 
                 if !bundle.scalars.isEmpty {
-                    ScalarChartCard(points: bundle.scalars)
+                    ScalarChartCard(tag: bundle.tag, points: bundle.scalars)
                         .id(scalarSeriesIdentity(tag: bundle.tag, points: bundle.scalars))
                 }
 
@@ -244,6 +244,7 @@ private struct TagDetail: View {
 }
 
 private struct ScalarChartCard: View {
+    let tag: String
     let points: [ScalarPoint]
     @State private var chartPoints: [ScalarPoint] = []
     @State private var hovered: ScalarPoint?
@@ -252,7 +253,8 @@ private struct ScalarChartCard: View {
     private static let maxVisiblePoints = 1000
     private static let hoverMinInterval: TimeInterval = 1.0 / 60.0
 
-    init(points: [ScalarPoint]) {
+    init(tag: String, points: [ScalarPoint]) {
+        self.tag = tag
         self.points = points
         _chartPoints = State(initialValue: Self.downsample(points))
     }
@@ -266,8 +268,8 @@ private struct ScalarChartCard: View {
                     Text("Scalars")
                         .font(.headline)
                     Spacer()
-                    Button("Copy CSV", systemImage: "doc.on.doc") {
-                        copyScalarsCSV(points)
+                    Button("Copy TSV", systemImage: "doc.on.doc") {
+                        copyScalarsTSV(tag: tag, scalars: points)
                     }
                     .buttonStyle(.bordered)
                 }
@@ -379,15 +381,22 @@ private struct ScalarChartCard: View {
         return abs(left.step - step) <= abs(right.step - step) ? left : right
     }
 
-    private func copyScalarsCSV(_ scalars: [ScalarPoint]) {
-        var csv = "step,wall_time,value\n"
+    private func copyScalarsTSV(tag: String, scalars: [ScalarPoint]) {
+        let valueColumn = sanitizedTSVField(tag)
+        var tsv = "wall_time\tstep\t\(valueColumn)\n"
         let formatter = ISO8601DateFormatter()
         for s in scalars {
             let ts = formatter.string(from: s.wallTime)
-            csv += "\(s.step),\(ts),\(String(format: "%.3f", s.value))\n"
+            tsv += "\(ts)\t\(s.step)\t\(String(format: "%.3f", s.value))\n"
         }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(csv, forType: .string)
+        NSPasteboard.general.setString(tsv, forType: .string)
+    }
+
+    private func sanitizedTSVField(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
     }
 
     private static func downsample(_ points: [ScalarPoint]) -> [ScalarPoint] {
