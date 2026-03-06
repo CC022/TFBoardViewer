@@ -150,6 +150,7 @@ private struct TagDetail: View {
 
                 if !bundle.scalars.isEmpty {
                     ScalarChartCard(points: bundle.scalars)
+                        .id(scalarSeriesIdentity(tag: bundle.tag, points: bundle.scalars))
                 }
 
                 if !bundle.images.isEmpty {
@@ -229,13 +230,36 @@ private struct TagDetail: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
+
+    private func scalarSeriesIdentity(tag: String, points: [ScalarPoint]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(tag)
+        hasher.combine(points.count)
+        for point in points {
+            hasher.combine(point.step)
+            hasher.combine(point.value.bitPattern)
+        }
+        return hasher.finalize()
+    }
 }
 
 private struct ScalarChartCard: View {
     let points: [ScalarPoint]
+    @State private var chartPoints: [ScalarPoint] = []
     @State private var hovered: ScalarPoint?
+    @State private var lastHoverUpdate: TimeInterval = 0
+
+    private static let maxVisiblePoints = 1000
+    private static let hoverMinInterval: TimeInterval = 1.0 / 60.0
+
+    init(points: [ScalarPoint]) {
+        self.points = points
+        _chartPoints = State(initialValue: Self.downsample(points))
+    }
 
     var body: some View {
+        let visiblePoints = chartPoints.isEmpty ? points : chartPoints
+
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -249,7 +273,7 @@ private struct ScalarChartCard: View {
                 }
 
                 Chart {
-                    ForEach(points) { point in
+                    ForEach(visiblePoints) { point in
                         LineMark(
                             x: .value("Step", point.step),
                             y: .value("Value", point.value)
@@ -260,13 +284,14 @@ private struct ScalarChartCard: View {
                     if let hovered {
                         RuleMark(x: .value("Selected", hovered.step))
                             .foregroundStyle(.gray.opacity(0.35))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
                         PointMark(
                             x: .value("Step", hovered.step),
                             y: .value("Value", hovered.value)
                         )
                         .symbolSize(90)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.pink)
                     }
                 }
                 .chartXAxis {
@@ -277,53 +302,81 @@ private struct ScalarChartCard: View {
                 }
                 .chartOverlay { proxy in
                     GeometryReader { geo in
-                        Rectangle()
-                            .fill(.clear)
-                            .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                switch phase {
-                                case .active(let location):
-                                    guard let plotFrame = proxy.plotFrame else {
+                        let plotFrame = proxy.plotFrame.map { geo[$0] }
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .fill(.clear)
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active(let location):
+                                        guard let frame = plotFrame else {
+                                            hovered = nil
+                                            return
+                                        }
+                                        let xInPlot = location.x - frame.minX
+                                        guard xInPlot >= 0, xInPlot <= proxy.plotSize.width else {
+                                            hovered = nil
+                                            return
+                                        }
+                                        guard let stepValue: Double = proxy.value(atX: xInPlot) else {
+                                            hovered = nil
+                                            return
+                                        }
+                                        let now = Date.timeIntervalSinceReferenceDate
+                                        guard now - lastHoverUpdate >= Self.hoverMinInterval else { return }
+                                        lastHoverUpdate = now
+                                        let targetStep = Int64(stepValue.rounded())
+                                        let nearest = nearestPoint(step: targetStep, in: visiblePoints)
+                                        if hovered?.step != nearest?.step {
+                                            hovered = nearest
+                                        }
+                                    case .ended:
                                         hovered = nil
-                                        return
                                     }
-                                    let frame = geo[plotFrame]
-                                    let xInPlot = location.x - frame.minX
-                                    guard xInPlot >= 0, xInPlot <= proxy.plotSize.width else {
-                                        hovered = nil
-                                        return
-                                    }
-                                    guard let stepValue: Double = proxy.value(atX: xInPlot) else {
-                                        hovered = nil
-                                        return
-                                    }
-                                    hovered = nearestPoint(step: Int64(stepValue.rounded()))
-                                case .ended:
-                                    hovered = nil
                                 }
+
+                            if let hovered, let frame = plotFrame,
+                               let markerX = proxy.position(forX: hovered.step),
+                               let markerY = proxy.position(forY: hovered.value) {
+                                HoverValueBadge(point: hovered)
+                                    .position(
+                                        x: min(max(frame.minX + markerX + 56, 64), geo.size.width - 64),
+                                        y: max(frame.minY + markerY - 42, 20)
+                                    )
                             }
+                        }
                     }
                 }
                 .frame(height: 320)
-
-                if let selected = hovered ?? points.last {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(selected.value.formatted(.number.precision(.fractionLength(3))))
-                            .font(.system(.title2, design: .rounded).weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(.primary)
-                        Text("\(hovered == nil ? "Latest" : "Hovered") • Step \(selected.step)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
         }
     }
 
-    private func nearestPoint(step: Int64) -> ScalarPoint? {
-        points.min(by: { abs($0.step - step) < abs($1.step - step) })
+    private func nearestPoint(step: Int64, in data: [ScalarPoint]) -> ScalarPoint? {
+        guard !data.isEmpty else { return nil }
+        if step <= data[0].step { return data[0] }
+        if step >= data[data.count - 1].step { return data[data.count - 1] }
+
+        var low = 0
+        var high = data.count - 1
+        while low <= high {
+            let mid = (low + high) / 2
+            let midStep = data[mid].step
+            if midStep == step {
+                return data[mid]
+            } else if midStep < step {
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+
+        let rightIndex = min(low, data.count - 1)
+        let leftIndex = max(0, rightIndex - 1)
+        let left = data[leftIndex]
+        let right = data[rightIndex]
+        return abs(left.step - step) <= abs(right.step - step) ? left : right
     }
 
     private func copyScalarsCSV(_ scalars: [ScalarPoint]) {
@@ -335,6 +388,54 @@ private struct ScalarChartCard: View {
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(csv, forType: .string)
+    }
+
+    private static func downsample(_ points: [ScalarPoint]) -> [ScalarPoint] {
+        guard points.count > maxVisiblePoints else { return points }
+
+        let sorted = points.sorted { $0.step < $1.step }
+        let lastIndex = sorted.count - 1
+        let step = Double(lastIndex) / Double(maxVisiblePoints - 1)
+        var sampled: [ScalarPoint] = []
+        sampled.reserveCapacity(maxVisiblePoints)
+
+        var previousIndex = -1
+        for i in 0..<maxVisiblePoints {
+            let index = min(lastIndex, Int((Double(i) * step).rounded()))
+            if index != previousIndex {
+                sampled.append(sorted[index])
+                previousIndex = index
+            }
+        }
+
+        if sampled.last?.step != sorted[lastIndex].step {
+            sampled.append(sorted[lastIndex])
+        }
+        return sampled
+    }
+}
+
+private struct HoverValueBadge: View {
+    let point: ScalarPoint
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(point.value.formatted(.number.precision(.fractionLength(4))))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+            Text("Step \(point.step)")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 6)
     }
 }
 
